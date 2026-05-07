@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import torch
@@ -27,6 +27,10 @@ class ReplayBuffer:
         action_dim: Dimensionality of a single action.
         n_envs: Number of parallel environments (transitions added per step).
         device: PyTorch device to send sampled tensors to.
+        handle_timeout_termination: If True, extract ``TimeLimit.truncated`` from
+            infos and store it separately so that time-limit truncations are not
+            treated as true terminal states during critic updates.
+            See https://github.com/DLR-RM/stable-baselines3/issues/284
     """
 
     def __init__(
@@ -36,6 +40,7 @@ class ReplayBuffer:
         action_dim: int,
         n_envs: int = 1,
         device: torch.device | str = "cpu",
+        handle_timeout_termination: bool = True,
     ):
         self.buffer_size = buffer_size
         self.obs_dim = obs_dim
@@ -48,11 +53,16 @@ class ReplayBuffer:
 
         # Pre-allocate storage as flat (buffer_size, dim) arrays.
         # Each row is one transition regardless of which env it came from.
+        self.handle_timeout_termination = handle_timeout_termination
+
         self.observations      = np.zeros((buffer_size, obs_dim),    dtype=np.float32)
         self.next_observations = np.zeros((buffer_size, obs_dim),    dtype=np.float32)
         self.actions           = np.zeros((buffer_size, action_dim), dtype=np.float32)
         self.rewards           = np.zeros((buffer_size, 1),          dtype=np.float32)
         self.dones             = np.zeros((buffer_size, 1),          dtype=np.float32)
+        # Stores whether a transition ended due to a time limit (truncation).
+        # Kept separate so the critic can treat them as non-terminal.
+        self.timeouts          = np.zeros((buffer_size, 1),          dtype=np.float32)
 
     # ------------------------------------------------------------------
     # Writing
@@ -60,11 +70,12 @@ class ReplayBuffer:
 
     def add(
         self,
-        obs: np.ndarray,        # (n_envs, obs_dim)
-        next_obs: np.ndarray,   # (n_envs, obs_dim)
-        action: np.ndarray,     # (n_envs, action_dim)
-        reward: np.ndarray,     # (n_envs,)
-        done: np.ndarray,       # (n_envs,)
+        obs: np.ndarray,                    # (n_envs, obs_dim)
+        next_obs: np.ndarray,               # (n_envs, obs_dim)
+        action: np.ndarray,                 # (n_envs, action_dim)
+        reward: np.ndarray,                 # (n_envs,)
+        done: np.ndarray,                   # (n_envs,)
+        infos: list[dict[str, Any]] | None = None,  # per-env info dicts from env.step()
     ) -> None:
         """Write one step of experience from all parallel environments."""
         # Number of transitions we're inserting (== n_envs in normal use)
@@ -79,6 +90,26 @@ class ReplayBuffer:
         self.actions[idxs]           = action
         self.rewards[idxs]           = reward.reshape(-1, 1)
         self.dones[idxs]             = done.reshape(-1, 1)
+
+        if self.handle_timeout_termination and infos is not None:
+            # Extract the TimeLimit.truncated flag set by gymnasium's TimeLimit wrapper.
+            # A truncated episode ended due to a time limit, NOT a true terminal state,
+            # so the critic should bootstrap from next_obs rather than treating it as done.
+            #
+            # gymnasium's SyncVectorEnv returns infos as a dict of arrays, e.g.:
+            #   infos["TimeLimit.truncated"] -> ndarray of bool, shape (n_envs,)
+            # Older / non-vectorized envs return a list[dict] instead.
+            if isinstance(infos, dict):
+                truncated = np.array(
+                    infos.get("TimeLimit.truncated", np.zeros(n, dtype=bool)),
+                    dtype=np.float32,
+                )
+            else:
+                truncated = np.array(
+                    [info.get("TimeLimit.truncated", False) for info in infos],
+                    dtype=np.float32,
+                )
+            self.timeouts[idxs] = truncated.reshape(-1, 1)
 
         # Advance the circular pointer and track how full the buffer is.
         self.pos = (self.pos + n) % self.buffer_size
@@ -99,7 +130,12 @@ class ReplayBuffer:
             observations=self._to_tensor(self.observations[idxs]),
             actions=self._to_tensor(self.actions[idxs]),
             next_observations=self._to_tensor(self.next_observations[idxs]),
-            dones=self._to_tensor(self.dones[idxs]),
+            # Mask out timeout truncations: treat them as non-terminal for the critic.
+            dones=self._to_tensor(
+                self.dones[idxs] * (1 - self.timeouts[idxs])
+                if self.handle_timeout_termination
+                else self.dones[idxs]
+            ),
             rewards=self._to_tensor(self.rewards[idxs]),
         )
 

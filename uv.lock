@@ -43,7 +43,7 @@ wheels = [
 [[package]]
 name = "ddpg-td3-sac"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "gymnasium", extra = ["mujoco"] },
     { name = "moviepy" },
