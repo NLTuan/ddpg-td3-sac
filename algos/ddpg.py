@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 
 import gymnasium as gym
 
@@ -11,24 +12,25 @@ import numpy as np
 from utils.replay_buffer import ReplayBuffer
 
 
+@dataclass
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
     seed: int = 1
     """seed of the experiment"""
-    torch_deterministic: bool = True
-    """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    capture_video: bool = True
+    capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
     env_id: str = "HalfCheetah-v5"
     """the environment id"""
-    total_timesteps: int = 100_000
+    num_envs: int = 4
+    """number of parallel environments"""
+    total_timesteps: int = 1_000_000
     """total timesteps of the experiment"""
-    learning_rate: float = 2e-4
+    learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
     buffer_size: int = int(1e6)
     """the replay memory buffer size"""
@@ -40,12 +42,10 @@ class Args:
     """the batch size of sample from the replay memory"""
     exploration_noise: float = 0.1
     """the scale of exploration noise"""
-    learning_starts: int = 200
+    learning_starts: int = int(25e3)
     """timestep to start learning"""
     policy_frequency: int = 2
     """the frequency of training policy (delayed)"""
-    num_envs: int = 4
-    """number of parallel environments"""
 
 
 args = Args()
