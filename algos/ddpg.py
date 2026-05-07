@@ -20,7 +20,7 @@ class Args:
     """seed of the experiment"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    capture_video: bool = False
+    capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
@@ -28,11 +28,11 @@ class Args:
     """the environment id"""
     num_envs: int = 4
     """number of parallel environments"""
-    total_timesteps: int = 1_000_000
+    total_timesteps: int = 1000_000
     """total timesteps of the experiment"""
     learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
-    buffer_size: int = int(1e6)
+    buffer_size: int = int(5e4)
     """the replay memory buffer size"""
     gamma: float = 0.99
     """the discount factor gamma"""
@@ -92,7 +92,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda x: x % 50 == 0)
         else:
             env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -141,7 +141,7 @@ for global_step in range(args.total_timesteps):
         with torch.no_grad():
             obs_tensor = torch.Tensor(obs).to(device)  # keep obs as ndarray for rb.add()
             actions = actor(obs_tensor)
-            actions += torch.normal(0, actor.action_scale * args.exploration_noise)
+            actions += torch.randn_like(actions) * actor.action_scale * args.exploration_noise
             actions = actions.cpu().numpy().clip(envs.single_action_space.low, envs.single_action_space.high)
 
     next_obs, rewards, terminations, truncations, infos = envs.step(actions)
@@ -188,3 +188,25 @@ for global_step in range(args.total_timesteps):
                 target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
             for param, target_param in zip(qf1.parameters(), qf1_target.parameters()):
                 target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
+
+envs.close()
+
+# ── Evaluation ────────────────────────────────────────────────────────────────
+print("\nRunning final evaluation...")
+eval_env = gym.make(args.env_id, render_mode="rgb_array")
+eval_env = gym.wrappers.RecordVideo(eval_env, f"videos/{run_name}/eval", episode_trigger=lambda x: True)
+eval_env = gym.wrappers.RecordEpisodeStatistics(eval_env)
+
+obs, _ = eval_env.reset(seed=args.seed)
+done = False
+while not done:
+    with torch.no_grad():
+        actions = actor(torch.Tensor(obs).to(device))
+        actions = actions.cpu().numpy()
+    
+    next_obs, reward, terminations, truncations, infos = eval_env.step(actions)
+    obs = next_obs
+    done = terminations or truncations
+
+print(f"Evaluation finished. Episode return: {infos['episode']['r']:.2f}")
+eval_env.close()
