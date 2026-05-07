@@ -24,11 +24,11 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "HalfCheetah-v5"
+    env_id: str = "Hopper-v5"
     """the environment id"""
     num_envs: int = 4
     """number of parallel environments"""
-    total_timesteps: int = 1000_000
+    total_timesteps: int = 100_000
     """total timesteps of the experiment"""
     learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
@@ -40,7 +40,7 @@ class Args:
     """target smoothing coefficient (default: 0.005)"""
     batch_size: int = 256
     """the batch size of sample from the replay memory"""
-    exploration_noise: float = 0.1
+    exploration_noise: float = 0.15
     """the scale of exploration noise"""
     learning_starts: int = int(25e3)
     """timestep to start learning"""
@@ -92,7 +92,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
         if capture_video and idx == 0:
             env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=lambda x: x % 50 == 0)
+            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
             env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
